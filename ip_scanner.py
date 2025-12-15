@@ -20,10 +20,10 @@ def ping_ip(ip):
         # 根据操作系统选择ping命令和参数
         if sys.platform.startswith('win'):
             # Windows系统ping命令
-            command = ['ping', '-n', '1', '-w', '2000', str(ip)]
+            command = ['ping', '-n', '2', '-w', '1000', str(ip)]  # 发送2个包，超时1秒
         else:
             # Linux/macOS系统ping命令
-            command = ['ping', '-c', '1', '-W', '2', str(ip)]
+            command = ['ping', '-c', '2', '-W', '1', str(ip)]  # 发送2个包，超时1秒
         
         result = subprocess.run(
             command,
@@ -33,11 +33,20 @@ def ping_ip(ip):
             shell=False
         )
         
-        # 综合判断是否可达：
-        # 1. 检查返回码是否为0
-        # 2. 检查输出中是否包含TTL=（表示收到了回复）
         stdout = result.stdout
-        is_reachable = result.returncode == 0 or "TTL=" in stdout or "ttl=" in stdout
+        
+        # 分析输出内容
+        has_reply = "来自" in stdout or "Reply from" in stdout or "64 bytes from" in stdout
+        has_ttl = "TTL=" in stdout or "ttl=" in stdout
+        has_timeout = "请求超时" in stdout or "Request timed out" in stdout or "timeout" in stdout.lower()
+        has_unreachable = "无法访问目标主机" in stdout or "Destination host unreachable" in stdout or "unreachable" in stdout.lower()
+        
+        # 综合判断是否可达：
+        # 1. 必须有TTL值（表示成功收到回复）
+        # 2. 不能包含"无法访问目标主机"或"unreachable"
+        # 3. 考虑返回码，但优先级低于实际输出内容
+        is_reachable = (has_ttl and not has_unreachable) or \
+                      (result.returncode == 0 and has_reply and not has_unreachable)
         
         return is_reachable
     except Exception as e:
