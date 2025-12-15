@@ -8,30 +8,106 @@ import argparse
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+import os
 
-# 用于存储结果的列表
-reachable_ips = []
-unreachable_ips = []
-lock = threading.Lock()
+# 定义颜色常量
+class Colors:
+    if sys.platform.startswith('win'):
+        # Windows系统颜色代码
+        try:
+            import ctypes
+            # 获取Windows控制台句柄
+            STD_OUTPUT_HANDLE = -11
+            hConsole = ctypes.windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+            
+            # 定义颜色常量
+            RESET = ''
+            GREEN = ''
+            RED = ''
+            YELLOW = ''
+            BLUE = ''
+            CYAN = ''
+            
+            @classmethod
+            def set_color(cls, color_code):
+                ctypes.windll.kernel32.SetConsoleTextAttribute(cls.hConsole, color_code)
+            
+            # 颜色打印装饰器
+            @staticmethod
+            def print_color(text, color_code):
+                try:
+                    import ctypes
+                    STD_OUTPUT_HANDLE = -11
+                    hConsole = ctypes.windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+                    ctypes.windll.kernel32.SetConsoleTextAttribute(hConsole, color_code)
+                    print(text)
+                    ctypes.windll.kernel32.SetConsoleTextAttribute(hConsole, 7)  # 重置为默认颜色
+                except:
+                    # 如果无法设置颜色，使用无颜色输出
+                    print(text)
+        except:
+            # 如果无法设置颜色，使用无颜色输出
+            RESET = ''
+            GREEN = ''
+            RED = ''
+            YELLOW = ''
+            BLUE = ''
+            CYAN = ''
+            
+            @staticmethod
+            def print_color(text, color_code):
+                print(text)
+    else:
+        # Linux/macOS系统ANSI颜色代码
+        RESET = '\033[0m'
+        GREEN = '\033[92m'
+        RED = '\033[91m'
+        YELLOW = '\033[93m'
+        BLUE = '\033[94m'
+        CYAN = '\033[96m'
+        
+        @staticmethod
+        def print_color(text, color_code):
+            color_map = {
+                10: '\033[92m',  # 绿色
+                12: '\033[91m',  # 红色
+                14: '\033[93m',  # 黄色
+                9:  '\033[94m',  # 蓝色
+                11: '\033[96m',  # 青色
+            }
+            color = color_map.get(color_code, '')
+            print(f"{color}{text}{'\033[0m'}")
 
 # ping测试函数
-def ping_ip(ip):
-    """测试单个IP是否可达"""
+def ping_ip(ip, count=1, timeout=500):
+    """测试单个IP是否可达
+    
+    Args:
+        ip: IP地址对象
+        count: ping包数量
+        timeout: 超时时间（毫秒）
+    
+    Returns:
+        bool: IP是否可达
+    """
     try:
         # 根据操作系统选择ping命令和参数
+        ip_str = str(ip)
         if sys.platform.startswith('win'):
-            # Windows系统ping命令
-            command = ['ping', '-n', '2', '-w', '1000', str(ip)]  # 发送2个包，超时1秒
+            # Windows系统ping命令 - 减少ping次数提高速度
+            command = ['ping', '-n', str(count), '-w', str(timeout), ip_str]
         else:
-            # Linux/macOS系统ping命令
-            command = ['ping', '-c', '2', '-W', '1', str(ip)]  # 发送2个包，超时1秒
+            # Linux/macOS系统ping命令 - 减少ping次数提高速度
+            command = ['ping', '-c', str(count), '-W', str(timeout//1000), ip_str]
         
+        # 执行ping命令，捕获输出
         result = subprocess.run(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            shell=False
+            shell=False,
+            timeout=timeout/1000 + 1  # 防止命令执行超时
         )
         
         stdout = result.stdout
@@ -39,8 +115,6 @@ def ping_ip(ip):
         # 分析输出内容
         has_reply = "来自" in stdout or "Reply from" in stdout or "64 bytes from" in stdout
         has_ttl = "TTL=" in stdout or "ttl=" in stdout
-        # 检测是否出现超时提示（当前未使用，保留以便后续扩展）
-        has_timeout = "请求超时" in stdout or "Request timed out" in stdout or "timeout" in stdout.lower()
         has_unreachable = "无法访问目标主机" in stdout or "Destination host unreachable" in stdout or "unreachable" in stdout.lower()
         
         # 综合判断是否可达：
@@ -51,20 +125,44 @@ def ping_ip(ip):
                       (result.returncode == 0 and has_reply and not has_unreachable)
         
         return is_reachable
+    except subprocess.TimeoutExpired:
+        # 命令执行超时
+        return False
     except Exception as e:
+        # 其他异常
         return False
 
 # 扫描IP函数
-def scan_ip(ip):
-    """扫描单个IP并更新结果列表"""
-    is_reachable = ping_ip(ip)
+def scan_ip(ip, reachable_list, unreachable_list, lock, progress_callback=None, count=1, timeout=500):
+    """扫描单个IP并更新结果列表
+    
+    Args:
+        ip: IP地址对象
+        reachable_list: 存储可达IP的列表
+        unreachable_list: 存储不可达IP的列表
+        lock: 线程锁
+        progress_callback: 进度回调函数
+        count: ping包数量
+        timeout: 超时时间（毫秒）
+    """
+    is_reachable = ping_ip(ip, count=count, timeout=timeout)
     with lock:
         if is_reachable:
-            reachable_ips.append(str(ip))
-            print(f"[可达] {ip}")
+            reachable_list.append(str(ip))
+            if sys.platform.startswith('win'):
+                Colors.print_color(f"[可达] {ip}", 10)  # 10: 绿色背景黑色文字
+            else:
+                print(f"[{Colors.GREEN}可达{Colors.RESET}] {ip}")
         else:
-            unreachable_ips.append(str(ip))
-            print(f"[不可达] {ip}")
+            unreachable_list.append(str(ip))
+            if sys.platform.startswith('win'):
+                Colors.print_color(f"[不可达] {ip}", 12)  # 12: 红色背景黑色文字
+            else:
+                print(f"[{Colors.RED}不可达{Colors.RESET}] {ip}")
+        
+        # 调用进度回调函数
+        if progress_callback:
+            progress_callback()
 
 # 解析网段
 def parse_network(network):
@@ -84,55 +182,102 @@ def show_results_table(reachable, unreachable):
     reachable_count = len(reachable)
     unreachable_count = len(unreachable)
     
+    if total == 0:
+        print("\n[错误] 没有可显示的结果")
+        return
+    
     # 显示统计信息表格
-    print("\n" + "=" * 60)
-    print("扫描结果统计")
-    print("=" * 60)
-    print(f"| {'统计项':<15} | {'数值':<10} |")
-    print(f"|{'-'*17}|{'-'*12}|")
-    print(f"| {'总IP数':<15} | {total:<10} |")
-    print(f"| {'可达IP数':<15} | {reachable_count:<10} |")
-    print(f"| {'不可达IP数':<15} | {unreachable_count:<10} |")
-    print(f"| {'可达率':<15} | {reachable_count/total*100:.1f}%{'':<6} |")
-    print("=" * 60)
+    if sys.platform.startswith('win'):
+        print("\n" + "╚══════════════════════════════════════════════════════╝")
+        Colors.print_color("╔══════════════════════════════════════════════════════╗", 11)  # 11: 青色背景黑色文字
+        Colors.print_color("║                  扫描结果统计                      ║", 11)
+        Colors.print_color("╠══════════════════════════════════════════════════════╣", 11)
+    else:
+        print(f"\n{Colors.CYAN}╚══════════════════════════════════════════════════════╝{Colors.RESET}")
+        print(f"{Colors.CYAN}╔══════════════════════════════════════════════════════╗{Colors.RESET}")
+        print(f"{Colors.CYAN}║                  扫描结果统计                      ║{Colors.RESET}")
+        print(f"{Colors.CYAN}╠══════════════════════════════════════════════════════╣{Colors.RESET}")
+    
+    print(f"| {'统计项':<15} | {'数值':<10} | {'比例':<15} |")
+    print(f"|{'-'*17}|{'-'*12}|{'-'*17}|")
+    print(f"| {'总IP数':<15} | {total:<10} | {'100%':<15} |")
+    print(f"| {'可达IP数':<15} | {reachable_count:<10} | {reachable_count/total*100:>7.1f}%{'':<7} |")
+    print(f"| {'不可达IP数':<15} | {unreachable_count:<10} | {unreachable_count/total*100:>7.1f}%{'':<7} |")
+    
+    if sys.platform.startswith('win'):
+        Colors.print_color("╚══════════════════════════════════════════════════════╝", 11)
+    else:
+        print(f"{Colors.CYAN}╚══════════════════════════════════════════════════════╝{Colors.RESET}")
     
     # 显示可达IP表格
-    print(f"\n可达IP列表 ({len(reachable_ips)}个):")
-    print("-" * 60)
-    if reachable_ips:
-        # 计算每行显示的IP数量，根据终端宽度调整
-        ip_per_row = 5
-        rows = (len(reachable_ips) + ip_per_row - 1) // ip_per_row
+    if sys.platform.startswith('win'):
+        Colors.print_color(f"\n可达IP列表 ({len(reachable)}个):", 10)
+    else:
+        print(f"\n{Colors.GREEN}可达IP列表 ({len(reachable)}个):{Colors.RESET}")
+    if sys.platform.startswith('win'):
+        Colors.print_color("╟──────────────────────────────────────────────────────╢", 10)
+    else:
+        print(f"{Colors.GREEN}╟──────────────────────────────────────────────────────╢{Colors.RESET}")
+    if reachable:
+        # 根据终端宽度动态调整每行显示的IP数量
+        try:
+            terminal_width = os.get_terminal_size().columns
+            ip_per_row = max(3, min(10, terminal_width // 17))  # 每个IP占16字符+1空格
+        except:
+            ip_per_row = 5  # 默认为5个IP/行
+            
+        rows = (len(reachable) + ip_per_row - 1) // ip_per_row
+        
+        # 对IP列表进行排序
+        sorted_reachable = sorted(reachable, key=lambda x: tuple(map(int, x.split('.'))))
         
         for i in range(rows):
             start = i * ip_per_row
-            end = min((i + 1) * ip_per_row, len(reachable_ips))
-            row_ips = reachable_ips[start:end]
+            end = min((i + 1) * ip_per_row, len(sorted_reachable))
+            row_ips = sorted_reachable[start:end]
             # 格式化输出IP，每个IP占16字符宽度
             formatted_ips = [f"{ip:<16}" for ip in row_ips]
             print("   " + "".join(formatted_ips))
     else:
         print("   无可达IP")
-    print("-" * 60)
+    if sys.platform.startswith('win'):
+        Colors.print_color("╚──────────────────────────────────────────────────────╝", 10)
+    else:
+        print(f"{Colors.GREEN}╚──────────────────────────────────────────────────────╝{Colors.RESET}")
     
     # 显示不可达IP表格
-    print(f"\n不可达IP列表 ({len(unreachable_ips)}个):")
-    print("-" * 60)
-    if unreachable_ips:
-        # 计算每行显示的IP数量
-        ip_per_row = 5
-        rows = (len(unreachable_ips) + ip_per_row - 1) // ip_per_row
+    if sys.platform.startswith('win'):
+        Colors.print_color(f"\n不可达IP列表 ({len(unreachable)}个):", 12)
+        Colors.print_color("╟──────────────────────────────────────────────────────╢", 12)
+    else:
+        print(f"\n{Colors.RED}不可达IP列表 ({len(unreachable)}个):{Colors.RESET}")
+        print(f"{Colors.RED}╟──────────────────────────────────────────────────────╢{Colors.RESET}")
+    if unreachable:
+        # 根据终端宽度动态调整每行显示的IP数量
+        try:
+            terminal_width = os.get_terminal_size().columns
+            ip_per_row = max(3, min(10, terminal_width // 17))  # 每个IP占16字符+1空格
+        except:
+            ip_per_row = 5  # 默认为5个IP/行
+            
+        rows = (len(unreachable) + ip_per_row - 1) // ip_per_row
+        
+        # 对IP列表进行排序
+        sorted_unreachable = sorted(unreachable, key=lambda x: tuple(map(int, x.split('.'))))
         
         for i in range(rows):
             start = i * ip_per_row
-            end = min((i + 1) * ip_per_row, len(unreachable_ips))
-            row_ips = unreachable_ips[start:end]
+            end = min((i + 1) * ip_per_row, len(sorted_unreachable))
+            row_ips = sorted_unreachable[start:end]
             # 格式化输出IP，每个IP占16字符宽度
             formatted_ips = [f"{ip:<16}" for ip in row_ips]
             print("   " + "".join(formatted_ips))
     else:
         print("   无不可达IP")
-    print("-" * 60)
+    if sys.platform.startswith('win'):
+        Colors.print_color("╚──────────────────────────────────────────────────────╝", 12)
+    else:
+        print(f"{Colors.RED}╚──────────────────────────────────────────────────────╝{Colors.RESET}")
 
 # 绘制IP可达性图形
 def plot_ip_status(network, reachable, unreachable):
@@ -235,13 +380,22 @@ def plot_ip_status(network, reachable, unreachable):
 
 # 主函数
 def main():
-    print("=" * 60)
-    print("            IP网段扫描工具")
-    print("=" * 60)
+    if sys.platform.startswith('win'):
+        Colors.print_color("╔══════════════════════════════════════════════════════╗", 11)
+        Colors.print_color("║                 IP网段扫描工具                      ║", 11)
+        Colors.print_color("╚══════════════════════════════════════════════════════╝", 11)
+    else:
+        print(f"{Colors.CYAN}╔══════════════════════════════════════════════════════╗{Colors.RESET}")
+        print(f"{Colors.CYAN}║                 IP网段扫描工具                      ║{Colors.RESET}")
+        print(f"{Colors.CYAN}╚══════════════════════════════════════════════════════╝{Colors.RESET}")
     
     # 创建命令行参数解析器
     parser = argparse.ArgumentParser(description='IP网段扫描工具')
     parser.add_argument('-n', '--network', type=str, help='要扫描的IP网段（例如：192.168.1.0/24）')
+    parser.add_argument('-t', '--threads', type=int, default=100, help='并发线程数（默认：100）')
+    parser.add_argument('-p', '--packets', type=int, default=1, help='每个IP的ping包数量（默认：1）')
+    parser.add_argument('-w', '--timeout', type=int, default=500, help='ping超时时间（毫秒，默认：500）')
+    parser.add_argument('--no-graph', action='store_true', help='不显示图形化结果')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -258,27 +412,69 @@ def main():
         return
     
     total_ips = len(ips)
-    print(f"\n[信息] 开始扫描网段: {network}")
-    print(f"[信息] 总共有 {total_ips} 个IP地址需要扫描")
-    print("\n" + "=" * 60)
+    if sys.platform.startswith('win'):
+        Colors.print_color(f"\n[信息] 开始扫描网段: {network}", 9)  # 9: 蓝色背景黑色文字
+        Colors.print_color(f"[信息] 总共有 {total_ips} 个IP地址需要扫描", 9)
+        Colors.print_color(f"[信息] 并发线程数: {args.threads}", 9)
+        Colors.print_color(f"[信息] 每个IP的ping包数量: {args.packets}", 9)
+        Colors.print_color(f"[信息] ping超时时间: {args.timeout} 毫秒", 9)
+        print("\n" + "╔══════════════════════════════════════════════════════╗")
+    else:
+        print(f"\n{Colors.BLUE}[信息] 开始扫描网段: {network}{Colors.RESET}")
+        print(f"{Colors.BLUE}[信息] 总共有 {total_ips} 个IP地址需要扫描{Colors.RESET}")
+        print(f"{Colors.BLUE}[信息] 并发线程数: {args.threads}{Colors.RESET}")
+        print(f"{Colors.BLUE}[信息] 每个IP的ping包数量: {args.packets}{Colors.RESET}")
+        print(f"{Colors.BLUE}[信息] ping超时时间: {args.timeout} 毫秒{Colors.RESET}")
+        print(f"\n{Colors.CYAN}╔══════════════════════════════════════════════════════╗{Colors.RESET}")
+    
+    # 初始化结果列表
+    reachable_ips = []
+    unreachable_ips = []
+    lock = threading.Lock()
+    
+    # 初始化进度计数器
+    scanned_count = 0
+    progress_lock = threading.Lock()
+    
+    # 进度回调函数
+    def update_progress():
+        nonlocal scanned_count
+        with progress_lock:
+            scanned_count += 1
+            progress = scanned_count / total_ips * 100
+            # 每扫描10%的IP或扫描完成时显示进度
+            if scanned_count % (total_ips // 10 or 1) == 0 or scanned_count == total_ips:
+                if sys.platform.startswith('win'):
+                    Colors.print_color(f"[进度] 已扫描 {scanned_count}/{total_ips} 个IP地址 ({progress:.1f}%)", 14)  # 14: 黄色背景黑色文字
+                else:
+                    print(f"{Colors.YELLOW}[进度] 已扫描 {scanned_count}/{total_ips} 个IP地址 ({progress:.1f}%){Colors.RESET}")
     
     start_time = time.time()
     
     # 使用线程池进行并发扫描
-    with ThreadPoolExecutor(max_workers=100) as executor:
-        executor.map(scan_ip, ips)
+    with ThreadPoolExecutor(max_workers=args.threads) as executor:
+        # 使用lambda函数传递额外参数
+        list(executor.map(lambda ip: scan_ip(ip, reachable_ips, unreachable_ips, lock, update_progress, 
+                                            count=args.packets, timeout=args.timeout), ips))
     
     end_time = time.time()
     scan_time = end_time - start_time
     
-    print("\n" + "=" * 60)
-    print(f"[完成] 扫描完成！耗时: {scan_time:.2f} 秒")
+    if sys.platform.startswith('win'):
+        print("\n" + "╚══════════════════════════════════════════════════════╝")
+        Colors.print_color(f"[完成] 扫描完成！耗时: {scan_time:.2f} 秒", 10)
+        Colors.print_color(f"[完成] 平均扫描速度: {total_ips/scan_time:.2f} 个IP/秒", 10)
+    else:
+        print(f"\n{Colors.CYAN}╚══════════════════════════════════════════════════════╝{Colors.RESET}")
+        print(f"{Colors.GREEN}[完成] 扫描完成！耗时: {scan_time:.2f} 秒{Colors.RESET}")
+        print(f"{Colors.GREEN}[完成] 平均扫描速度: {total_ips/scan_time:.2f} 个IP/秒{Colors.RESET}")
     
     # 显示结果表格
     show_results_table(reachable_ips, unreachable_ips)
     
-    # 绘制图形化结果
-    plot_ip_status(network, reachable_ips, unreachable_ips)
+    # 绘制图形化结果（如果没有指定--no-graph参数）
+    if not args.no_graph:
+        plot_ip_status(network, reachable_ips, unreachable_ips)
 
 if __name__ == "__main__":
     main()
