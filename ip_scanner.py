@@ -4,6 +4,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import time
 import sys
+import argparse
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -38,6 +39,7 @@ def ping_ip(ip):
         # 分析输出内容
         has_reply = "来自" in stdout or "Reply from" in stdout or "64 bytes from" in stdout
         has_ttl = "TTL=" in stdout or "ttl=" in stdout
+        # 检测是否出现超时提示（当前未使用，保留以便后续扩展）
         has_timeout = "请求超时" in stdout or "Request timed out" in stdout or "timeout" in stdout.lower()
         has_unreachable = "无法访问目标主机" in stdout or "Destination host unreachable" in stdout or "unreachable" in stdout.lower()
         
@@ -237,8 +239,18 @@ def main():
     print("            IP网段扫描工具")
     print("=" * 60)
     
-    # 获取用户输入的网段
-    network = input("请输入IP网段（例如：192.168.1.0/24）: ")
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description='IP网段扫描工具')
+    parser.add_argument('-n', '--network', type=str, help='要扫描的IP网段（例如：192.168.1.0/24）')
+    
+    # 解析命令行参数
+    args = parser.parse_args()
+    
+    # 如果提供了命令行参数，则使用参数值；否则，获取用户输入的网段
+    if args.network:
+        network = args.network
+    else:
+        network = input("请输入IP网段（例如：192.168.1.0/24）: ")
     
     # 解析网段
     ips = parse_network(network)
