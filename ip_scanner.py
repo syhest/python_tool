@@ -202,7 +202,7 @@ def plot_ip_status(network, reachable, unreachable):
         # 添加图例 - 确保图例颜色与实际方块颜色一致
         reachable_patch = patches.Patch(color='#2ECC71', label='可达')
         unreachable_patch = patches.Patch(color='#E74C3C', label='不可达')
-        plt.legend(handles=[reachable_patch, unreachable_patch], loc='upper right', fontsize=12)
+        plt.legend(handles=[reachable_patch, unreachable_patch], loc='lower right', fontsize=12)
         
         # 设置坐标轴
         plt.xlim(-spacing, grid_cols * (box_size + spacing) - spacing)
@@ -215,11 +215,12 @@ def plot_ip_status(network, reachable, unreachable):
         # 添加统计信息文本
         stats_text = f"总IP数: {total_ips}\n可达IP数: {len(reachable_set)}\n不可达IP数: {total_ips - len(reachable_set)}\n可达率: {len(reachable_set)/total_ips*100:.1f}%"
         plt.text(
-            0.02, 0.98, stats_text, 
+            #0.02, 0.98, stats_text, 
+            0.79, 0.1, stats_text, 
             transform=ax.transAxes, 
             verticalalignment='top', 
             fontsize=10, 
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+            bbox=dict[str, str | float](boxstyle='round', facecolor='wheat', alpha=0.5)
         )
         
         # 显示图形
