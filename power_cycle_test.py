@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 import sys
 import logging
+import argparse
 
 # 配置日志输出
 logging.basicConfig(
@@ -20,14 +21,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def parse_arguments():
+    """
+    解析命令行参数
+    """
+    parser = argparse.ArgumentParser(description='电源上下电测试脚本')
+    
+    # 添加节点参数，支持用户指定要操作的节点列表
+    parser.add_argument('-n', '--nodes', nargs='+', type=int, default=[3, 6, 9, 12],
+                       help='要操作的节点列表，默认操作节点3、6、9、12')
+    
+    # 添加循环次数参数
+    parser.add_argument('-c', '--cycles', type=int, default=1000,
+                       help='执行循环的次数，默认执行1000次循环')
+    
+    # 添加单次循环参数
+    parser.add_argument('--single-cycle', action='store_true',
+                       help='只执行一次循环')
+    
+    return parser.parse_args()
+
 def main():
-    # 循环执行10次
-    for cycle in range(1, 21):
+    # 解析命令行参数
+    args = parse_arguments()
+    
+    # 确定循环次数
+    cycles = 1 if args.single_cycle else args.cycles
+    
+    # 获取要操作的节点列表
+    target_nodes = args.nodes
+    
+    # 循环执行指定次数
+    for cycle in range(1, cycles + 1):
         logger.info("=== 开始第 %d 次循环 ===", cycle)
         
         # 1. 执行电源下电操作
         logger.info("执行电源下电操作...")
-        for node in [3, 6, 9, 12]:
+        for node in target_nodes:
             # 先检查节点当前状态
             status_cmd = f"mgmt_tool node power get -n {node}"
             try:
@@ -90,7 +120,7 @@ def main():
         
         # 2. 执行电源上电操作
         logger.info("执行电源上电操作...")
-        for node in [3, 6, 9, 12]:
+        for node in target_nodes:
             # 先检查节点当前状态
             status_cmd = f"mgmt_tool node power get -n {node}"
             try:
@@ -140,7 +170,7 @@ def main():
                 continue
         
         # 等待40秒确保系统完全启动
-        wait_time = 35
+        wait_time = 40
         logger.info("等待%d秒让系统完全启动...", wait_time)
         
         # 优化的进度条实现 - 同一行更新，避免产生多行输出
