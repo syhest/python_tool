@@ -333,17 +333,31 @@ class SerialCommander:
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='CTC7132 配置脚本')
-    parser.add_argument('-n', '--nodes', type=int, nargs='+', help='选择配置的节点（支持多个节点，如 -n 1 2 3）')
+    parser.add_argument('-n', '--nodes', type=int, nargs='+', help='选择配置的节点（支持多个节点，如 -n 1 2 3；-n 0 表示所有节点）')
     parser.add_argument('--in', dest='in_port', type=int, help='输入端口')
     parser.add_argument('--of', dest='out_port', type=int, help='输出端口')
     args = parser.parse_args()
+    
+    # 处理 -n 0 的情况
+    nodes_to_configure = None
+    if args.nodes:
+        if 0 in args.nodes:
+            # 配置所有节点 1-12
+            nodes_to_configure = list(range(1, 13))
+        else:
+            # 验证并收集指定的节点
+            for node in args.nodes:
+                if node < 1 or node > 12:
+                    print(f"错误：节点号 {node} 超出范围（1-12）")
+                    return
+            nodes_to_configure = args.nodes
     
     commander = SerialCommander('/dev/ttyS6')
     
     try:
         commander.start_serial()
         commander.enter_ctc_shell()
-        commander.run_commands(nodes=args.nodes, in_port=args.in_port, out_port=args.out_port)
+        commander.run_commands(nodes=nodes_to_configure, in_port=args.in_port, out_port=args.out_port)
         commander.exit_ctc_shell()
     finally:
         commander.close_serial()
