@@ -110,6 +110,12 @@ class SerialCommander:
             elif command == 'CLIexit':
                 self.log_message("Output: Connection closed by foreign host.")
                 self.log_message("Output: Switch#")
+            elif command == 'ip -br a':
+                self.log_message("Output: lo               UNKNOWN        127.0.0.1/8")
+                self.log_message("Output: enp129s0f0      DOWN")
+                self.log_message("Output: enp129s0f1      DOWN")
+                time.sleep(wait_time)
+                return ["enp129s0f0      DOWN", "enp129s0f1      DOWN"]
             time.sleep(wait_time)
             return []
 
@@ -128,22 +134,88 @@ class SerialCommander:
         if not self.simulate and self.ser and self.ser.is_open:
             self.ser.close()
 
-    def configure_iperf(self, port_num):
-        self.log_message(f"Configuring iperf for serial {port_num}")
+    def detect_nic_names(self):
+        self.log_message("Detecting NIC names using 'ip -br a'")
 
-        ip_address = f"10.0.0.{2 + (port_num - 1011)}"
-        command = f'ifconfig eth0 {ip_address} netmask 255.255.255.0'
-        self.send_command(command, wait_time=0.1)
+        if self.simulate:
+            self.log_message("Simulation mode: using default NIC names")
+            return "enp129s0f0", "enp129s0f1"
+
+        output = self.send_command("ip -br a", wait_time=0.5)
+
+        nic_candidates = []
+        for line in output:
+            parts = line.split()
+            if parts and parts[0].startswith("enp129s0"):
+                nic_candidates.append(parts[0])
+
+        nic_candidates.sort()
+
+        if len(nic_candidates) >= 2:
+            nic_f0 = nic_candidates[0]
+            nic_f1 = nic_candidates[1]
+            self.log_message(f"Detected NICs: {nic_f0}, {nic_f1}")
+            return nic_f0, nic_f1
+        elif len(nic_candidates) == 1:
+            self.log_message(f"Warning: Only one NIC detected: {nic_candidates[0]}, using fallback")
+            return nic_candidates[0], "enp129s0f1"
+        else:
+            self.log_message("Warning: No NICs detected, using fallback names")
+            return "enp129s0f0", "enp129s0f1"
+
+    def configure_iperf(self, node, card):
+        self.log_message(f"Configuring iperf for node {node}, card {card}")
+
+        nic_f0, nic_f1 = self.detect_nic_names()
+
+        last_octet = 2 + (node - 1) * 2 + (card - 1)
+
+        if node <= 5:
+            ip_f0 = f"10.0.0.{last_octet}"
+            ip_f1 = f"20.0.0.{last_octet}"
+        else:
+            ip_f0 = f"20.0.0.{last_octet}"
+            ip_f1 = f"10.0.0.{last_octet}"
+
+        command_f0 = f'sudo busybox ifconfig {nic_f0} {ip_f0} netmask 255.255.255.0'
+        self.send_command(command_f0, wait_time=0.1)
+
+        command_f01 = f'sudo busybox ifconfig {nic_f0} up'
+        self.send_command(command_f01, wait_time=0.1)
+
+        command_f1 = f'sudo busybox ifconfig {nic_f1} {ip_f1} netmask 255.255.255.0'
+        self.send_command(command_f1, wait_time=0.1)
+
+        command_f11 = f'sudo busybox ifconfig {nic_f1} up'
+        self.send_command(command_f11, wait_time=0.1)
 
     def start_iperf_server(self):
         self.log_message("Starting iperf server")
-        command = 'iperf3 -s -i 1 > /dev/null &'
+        command = 'iperf3 -s -i 1 -p 5001 > /dev/null &'
         self.send_command(command, wait_time=0.1)
+        command1 = 'iperf3 -s -i 1 -p 5002 > /dev/null &'
+        self.send_command(command1, wait_time=0.1)
 
-    def start_iperf_client(self, target_ip):
-        self.log_message(f"Starting iperf client connecting to {target_ip}")
-        command = f'iperf3 -c {target_ip} -i 1 -t 9999 --bidir  > /dev/null &'
-        self.send_command(command, wait_time=0.1)
+    def start_iperf_client(self, node, card):
+        self.log_message(f"Starting iperf client for node {node}, card {card}")
+
+        last_octet = 2 + (node - 1) * 2 + (card - 1)
+
+        if node <= 5:
+            f0_ip = f"10.0.0.{last_octet}"
+            f1_ip = f"20.0.0.{last_octet}"
+        else:
+            f0_ip = f"20.0.0.{last_octet}"
+            f1_ip = f"10.0.0.{last_octet}"
+
+        target_f0 = f"{f0_ip.rsplit('.', 1)[0]}.{last_octet + 10}"
+        target_f1 = f"{f1_ip.rsplit('.', 1)[0]}.{last_octet + 10}"
+
+        command_f0 = f'iperf3 -c {target_f0} -i 1 -t 9999 --bidir -p 5001 > /dev/null &'
+        self.send_command(command_f0, wait_time=0.1)
+
+        command_f1 = f'iperf3 -c {target_f1} -i 1 -t 9999 --bidir -p 5002 > /dev/null &'
+        self.send_command(command_f1, wait_time=0.1)
 
     def kill_iperf(self):
         self.log_message("Killing iperf processes")
@@ -158,12 +230,12 @@ def get_serial_ports(node_nums, card_num):
 
     for node_num in node_nums:
         if node_num == 0:
-            nodes = list(range(1, 13))
+            nodes = list(range(1, 11))
         else:
             nodes = [node_num]
 
         if card_num == 0:
-            cards = list(range(1, 8))
+            cards = list(range(1, 3))
         else:
             cards = [card_num]
 
@@ -192,12 +264,11 @@ def configure_serial_port(node, card, port_num, quiet=False, action=None, target
         if action == 'server':
             commander.start_iperf_server()
         elif action == 'client':
-            target_ip = f"10.0.0.{62 + (port_num - 1011)}"
-            commander.start_iperf_client(target_ip)
+            commander.start_iperf_client(node, card)
         elif action == 'kill':
             commander.kill_iperf()
         else:
-            commander.configure_iperf(port_num)
+            commander.configure_iperf(node, card)
     finally:
         commander.close_serial()
         commander.save_log()
@@ -248,8 +319,8 @@ async def run_coroutine_mode(serial_ports, action=None, target_ip=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Set card iperf configuration')
-    parser.add_argument('-n', '--node', type=str, required=True, help='选择节点号（1-12，0表示所有节点，支持逗号分隔多个节点如：1,2,3,4）')
-    parser.add_argument('-c', '--card', type=int, required=True, help='选择卡号（1-7，0表示所有卡）')
+    parser.add_argument('-n', '--node', type=str, required=True, help='选择节点号（1-10，0表示所有节点，支持逗号分隔多个节点如：1,2,3,4）')
+    parser.add_argument('-c', '--card', type=int, required=True, help='选择卡号（1-2，0表示所有卡）')
     parser.add_argument('-t', '--thread', action='store_true', help='启用多线程模式，每个串口操作在独立线程中进行')
     parser.add_argument('-a', '--async', dest='async_mode', action='store_true', help='启用多协程模式，每个串口操作在独立协程中进行')
     parser.add_argument('-s', '--server', action='store_true', help='启动iperf服务端模式')
@@ -262,16 +333,16 @@ def main():
         parts = args.node.split(',')
         for part in parts:
             num = int(part.strip())
-            if num < 0 or num > 12:
-                print(f"错误：节点号 {num} 必须在 0-12 范围内")
+            if num < 0 or num > 10:
+                print(f"错误：节点号 {num} 必须在 0-10 范围内")
                 return
             node_nums.append(num)
     except ValueError:
         print("错误：节点号格式不正确，应为逗号分隔的数字")
         return
 
-    if args.card < 0 or args.card > 7:
-        print("错误：卡号必须在 0-7 范围内")
+    if args.card < 0 or args.card > 2:
+        print("错误：卡号必须在 0-2 范围内")
         return
 
     action = None
